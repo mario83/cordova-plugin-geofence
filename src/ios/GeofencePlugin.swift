@@ -153,7 +153,7 @@ func log(_ messages: [String]) {
 
     @objc func didReceiveLocalNotification (_ notification: Notification) {
         log("didReceiveLocalNotification")
-        if UIApplication.shared.applicationState != UIApplicationState.active {
+        if UIApplication.shared.applicationState != UIApplication.State.active {
             var data = "undefined"
             if let uiNotification = notification.object as? UILocalNotification {
                 if let notificationData = uiNotification.userInfo?["geofence.notification.data"] as? String {
@@ -182,7 +182,6 @@ func log(_ messages: [String]) {
 // class for faking crossing geofences
 @available(iOS 8.0, *)
 class GeofenceFaker {
-    let priority = DispatchQueue.GlobalQueuePriority.default
     let geoNotificationManager: GeoNotificationManager
 
     init(manager: GeoNotificationManager) {
@@ -190,29 +189,20 @@ class GeofenceFaker {
     }
 
     func start() {
-         DispatchQueue.global(priority: priority).async {
+         DispatchQueue.main.async {
             while (true) {
                 log("FAKER")
-                let notify = arc4random_uniform(4)
-                if notify == 0 {
-                    log("FAKER notify chosen, need to pick up some region")
-                    var geos = self.geoNotificationManager.getWatchedGeoNotifications()!
-                    if geos.count > 0 {
-                        //WTF Swift??
-                        let index = arc4random_uniform(UInt32(geos.count))
-                        let geo = geos[Int(index)]
-                        let id = geo["id"].stringValue
-                        DispatchQueue.main.async {
-                            if let region = self.geoNotificationManager.getMonitoredRegion(id) {
-                                log("FAKER Trigger didEnterRegion")
-                                self.geoNotificationManager.locationManager(
-                                    self.geoNotificationManager.locationManager,
-                                    didEnterRegion: region
-                                )
-                            }
-                        }
-                    }
+                
+                let id = "123456"
+                
+                if let region = self.geoNotificationManager.getMonitoredRegion(id) {
+                    log("FAKER Trigger didEnterRegion")
+                    self.geoNotificationManager.locationManager(
+                        self.geoNotificationManager.locationManager,
+                        didEnterRegion: region
+                    )
                 }
+                
                 Thread.sleep(forTimeInterval: 3)
             }
          }
@@ -226,19 +216,27 @@ class GeofenceFaker {
 @available(iOS 8.0, *)
 class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     let locationManager = CLLocationManager()
-    let store = GeoNotificationStore()
+    //let store = GeoNotificationStore()
 
     override init() {
         log("GeoNotificationManager init")
         super.init()
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = 10 //kCLDistanceFilterNone
     }
 
     func registerPermissions() {
         if iOS8 {
             locationManager.requestAlwaysAuthorization()
         }
+    }
+    
+    @available(iOS 14.0, *)
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+      if manager.authorizationStatus != .authorizedAlways {
+        log("Your geotification is saved but will only be activated once you grant Geotify permission to access the device location.")
+      }
     }
 
     func addOrUpdateGeoNotification(_ geoNotification: JSON) {
@@ -263,11 +261,11 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
         if let i = geoNotification["transitionType"].int {
             transitionType = i
         }
-        region.notifyOnEntry = 0 != transitionType & 1
-        region.notifyOnExit = 0 != transitionType & 2
+        region.notifyOnEntry = transitionType == 1
+        region.notifyOnExit = transitionType == 2
 
         //store
-        store.addOrUpdate(geoNotification)
+        //store.addOrUpdate(geoNotification)
         locationManager.startMonitoring(for: region)
     }
 
@@ -317,7 +315,8 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func getWatchedGeoNotifications() -> [JSON]? {
-        return store.getAll()
+        //return store.getAll()
+        return nil
     }
 
     func getMonitoredRegion(_ id: String) -> CLRegion? {
@@ -332,7 +331,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func removeGeoNotification(_ id: String) {
-        store.remove(id)
+        //store.remove(id)
         let region = getMonitoredRegion(id)
         if (region != nil) {
             log("Stoping monitoring region \(id)")
@@ -341,7 +340,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func removeAllGeoNotifications() {
-        store.clear()
+        //store.clear()
         for object in locationManager.monitoredRegions {
             let region = object
             log("Stoping monitoring region \(region.identifier)")
@@ -382,7 +381,7 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func locationManager(_ manager: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
-        log("State for region " + region.identifier)
+        log("State for region :\(region.identifier) :\(state.rawValue)")
     }
 
     func locationManager(_ manager: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
@@ -390,15 +389,15 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
     }
 
     func handleTransition(_ region: CLRegion!, transitionType: Int) {
-        if var geoNotification = store.findById(region.identifier) {
-            geoNotification["transitionType"].int = transitionType
+        
+        var dictionary = Dictionary<String,Any>()
+        
+        dictionary["id"] = region.identifier
+        dictionary["transitionType"] = transitionType
+        
+        let geoNotification = JSON.init(dictionary)
 
-            if geoNotification["notification"].isExists() {
-                notifyAbout(geoNotification)
-            }
-
-            NotificationCenter.default.post(name: Notification.Name(rawValue: "handleTransition"), object: geoNotification.rawString(String.Encoding.utf8.rawValue, options: []))
-        }
+        NotificationCenter.default.post(name: Notification.Name(rawValue: "handleTransition"), object: geoNotification.rawString(String.Encoding.utf8.rawValue, options: []))
     }
 
     func notifyAbout(_ geo: JSON) {
@@ -424,14 +423,14 @@ class GeoNotificationManager : NSObject, CLLocationManagerDelegate {
 
 class GeoNotificationStore {
     init() {
-        createDBStructure()
+        //createDBStructure()
     }
 
     func createDBStructure() {
         let (tables, err) = SD.existingTables()
 
         if (err != nil) {
-            log("Cannot fetch sqlite tables: \(err)")
+            log("Cannot fetch sqlite tables: \(SD.errorMessageForCode(err!))")
             return
         }
 
@@ -461,7 +460,7 @@ class GeoNotificationStore {
             withArgs: [id as AnyObject, geoNotification.description as AnyObject])
 
         if err != nil {
-            log("Error while adding \(id) GeoNotification: \(err)")
+            log("Error while adding \(id) GeoNotification: \(SD.errorMessageForCode(err!))")
         }
     }
 
@@ -471,7 +470,7 @@ class GeoNotificationStore {
             withArgs: [geoNotification.description as AnyObject, id as AnyObject])
 
         if err != nil {
-            log("Error while adding \(id) GeoNotification: \(err)")
+            log("Error while adding \(id) GeoNotification: \(SD.errorMessageForCode(err!))")
         }
     }
 
@@ -480,7 +479,7 @@ class GeoNotificationStore {
 
         if err != nil {
             //there was an error during the query, handle it here
-            log("Error while fetching \(id) GeoNotification table: \(err)")
+            log("Error while fetching \(id) GeoNotification table: \(SD.errorMessageForCode(err!))")
             return nil
         } else {
             if (resultSet.count > 0) {
@@ -498,7 +497,7 @@ class GeoNotificationStore {
 
         if err != nil {
             //there was an error during the query, handle it here
-            log("Error while fetching from GeoNotifications table: \(err)")
+            log("Error while fetching from GeoNotifications table: \(SD.errorMessageForCode(err!))")
             return nil
         } else {
             var results = [JSON]()
@@ -515,7 +514,7 @@ class GeoNotificationStore {
         let err = SD.executeChange("DELETE FROM GeoNotifications WHERE Id = ?", withArgs: [id as AnyObject])
 
         if err != nil {
-            log("Error while removing \(id) GeoNotification: \(err)")
+            log("Error while removing \(id) GeoNotification: \(SD.errorMessageForCode(err!))")
         }
     }
 
@@ -523,7 +522,7 @@ class GeoNotificationStore {
         let err = SD.executeChange("DELETE FROM GeoNotifications")
 
         if err != nil {
-            log("Error while deleting all from GeoNotifications: \(err)")
+            log("Error while deleting all from GeoNotifications: \(SD.errorMessageForCode(err!))")
         }
     }
 }
